@@ -28,16 +28,8 @@ pub fn build_proptest(attr: TokenStream, mut item_fn: ItemFn) -> Result<TokenStr
         .iter()
         .map(TestFnArg::from)
         .collect::<Result<Vec<_>>>()?;
-    let args_pats = args.iter().map(|arg| arg.pat());
-    let block = &item_fn.block;
-    let block = quote! {
-        {
-            let #args_type_ident { #(#args_pats,)* } = input;
-            #block
-        }
-    };
     item_fn.sig.inputs = parse_quote! { input: #args_type_ident };
-    item_fn.block = Box::new(parse2(block)?);
+    update_body(&args, &args_type_ident, &mut item_fn)?;
     let args_fields = args.iter().map(|arg| &arg.field);
     let config = to_proptest_config(attr_args);
     let ts = quote! {
@@ -55,6 +47,19 @@ pub fn build_proptest(attr: TokenStream, mut item_fn: ItemFn) -> Result<TokenStr
         panic!("{}", ts);
     }
     Ok(ts)
+}
+
+fn update_body(args: &[TestFnArg], args_type_ident: &Ident, item_fn: &mut ItemFn) -> Result<()> {
+    let args_pats = args.iter().map(|arg| arg.pat());
+    let block = &item_fn.block;
+    let block = quote! {
+        {
+            let #args_type_ident { #(#args_pats,)* } = input;
+            #block
+        }
+    };
+    item_fn.block = Box::new(parse2(block)?);
+    Ok(())
 }
 
 fn to_proptest_config(args: Option<Args>) -> TokenStream {
