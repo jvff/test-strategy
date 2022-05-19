@@ -2,8 +2,8 @@ use crate::syn_utils::{Arg, Args};
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
-    parse2, parse_quote, parse_str, spanned::Spanned, token, Field, FnArg, Ident, ItemFn, Pat,
-    Result, Visibility,
+    parse2, parse_quote, parse_str, spanned::Spanned, token, token::Async, Field, FnArg, Ident,
+    ItemFn, Pat, Result, Visibility,
 };
 
 pub fn build_proptest(attr: TokenStream, mut item_fn: ItemFn) -> Result<TokenStream> {
@@ -52,14 +52,43 @@ pub fn build_proptest(attr: TokenStream, mut item_fn: ItemFn) -> Result<TokenStr
 fn update_body(args: &[TestFnArg], args_type_ident: &Ident, item_fn: &mut ItemFn) -> Result<()> {
     let args_pats = args.iter().map(|arg| arg.pat());
     let block = &item_fn.block;
-    let block = quote! {
+    let mut block = quote! {
         {
             let #args_type_ident { #(#args_pats,)* } = input;
             #block
         }
     };
+
+    if let Some(asyncness) = item_fn.sig.asyncness.take() {
+        block = generate_async_block(asyncness, block)?;
+    }
+
     item_fn.block = Box::new(parse2(block)?);
+
     Ok(())
+}
+
+#[cfg(feature = "tokio")]
+fn generate_async_block(_asyncness: Async, test_block: TokenStream) -> Result<TokenStream> {
+    Ok(quote! {
+        {
+            let test_future = async move #test_block;
+
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create Tokio runtime")
+                .block_on(test_future)?;
+        }
+    })
+}
+
+#[cfg(not(feature = "tokio"))]
+fn generate_async_block(asyncness: Async, _test_block: TokenStream) -> Result<TokenStream> {
+    Err(syn::Error::new(
+        asyncness.span,
+        "`async` tests require `tokio` feature to be enabled in `test-strategy`",
+    ))
 }
 
 fn to_proptest_config(args: Option<Args>) -> TokenStream {
